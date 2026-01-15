@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure OpenAI GPT-4o Realtime Audio Chat</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎙️ GPT-4o Realtime Audio Chat</h1>
+            <p class="subtitle">Powered by Azure OpenAI</p>
+        </header>
+
+        <div class="settings-panel">
+            <h2>Audio Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-group">
+                    <label for="microphone-select">🎤 Microphone</label>
+                    <select id="microphone-select">
+                        <option value="">Loading devices...</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label for="speaker-select">🔊 Speaker</label>
+                    <select id="speaker-select">
+                        <option value="">Loading devices...</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label for="voice-select">🗣️ AI Voice</label>
+                    <select id="voice-select">
+                        <option value="">Loading voices...</option>
+                    </select>
+                </div>
+            </div>
+
+            <h2 class="settings-section-title">Voice Configuration</h2>
+            <div class="settings-grid">
+                <div class="setting-group">
+                    <label for="temperature-slider">
+                        🎚️ Temperature
+                        <span class="setting-value" id="temperature-value">0.8</span>
+                    </label>
+                    <input type="range" id="temperature-slider" min="0.6" max="1.2" step="0.1" value="0.8">
+                    <span class="setting-description" id="temperature-description">Controls response randomness</span>
+                </div>
+                <div class="setting-group">
+                    <label for="max-tokens-select">📝 Max Response Tokens</label>
+                    <select id="max-tokens-select">
+                        <option value="1024">1024 (Short)</option>
+                        <option value="2048">2048 (Medium)</option>
+                        <option value="4096" selected>4096 (Long)</option>
+                        <option value="inf">Unlimited</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="start-btn" class="btn btn-primary">
+                <span class="btn-icon">▶️</span>
+                Start Session
+            </button>
+            <button id="stop-btn" class="btn btn-danger" disabled>
+                <span class="btn-icon">⏹️</span>
+                End Session
+            </button>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-indicator" id="connection-status">
+                <span class="status-dot disconnected"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+            <div class="status-indicator" id="speech-status">
+                <span class="speech-icon">🎤</span>
+                <span class="status-text">Not listening</span>
+            </div>
+        </div>
+
+        <div class="audio-visualizer" id="audio-visualizer">
+            <canvas id="visualizer-canvas"></canvas>
+        </div>
+
+        <div class="transcript-container">
+            <h2>Conversation Transcript</h2>
+            <div class="transcript" id="transcript">
+                <div class="transcript-placeholder">
+                    Start a session to begin the conversation...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/socket.io.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
