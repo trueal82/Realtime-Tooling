@@ -326,8 +326,22 @@ class RealtimeChat {
             console.log('Session created:', data);
             this.logEvent('receive', 'session.created', data);
             this.updateConnectionStatus('connected', 'Session Active');
-            this.clearTranscript();
-            this.addSystemMessage('Session started. Speak to begin the conversation...');
+            // Only clear transcript and show message if not a voice change restart
+            if (!this.isVoiceChangeRestart) {
+                this.clearTranscript();
+                this.addSystemMessage('Session started. Speak to begin the conversation...');
+            } else {
+                this.addSystemMessage(`Voice changed. Ready to continue...`);
+                this.isVoiceChangeRestart = false;
+            }
+        });
+
+        this.socket.on('session_restarting', (data) => {
+            console.log('Session restarting:', data);
+            this.logEvent('info', `Session restarting: ${data.reason}`, data);
+            this.updateConnectionStatus('connecting', 'Changing voice...');
+            this.addSystemMessage(`Switching voice from ${data.old_voice} to ${data.new_voice}...`);
+            this.isVoiceChangeRestart = true;
         });
 
         this.socket.on('session_updated', (data) => {
@@ -398,12 +412,20 @@ class RealtimeChat {
         this.socket.on('speech_stopped', (data) => {
             this.logEvent('receive', 'input_audio_buffer.speech_stopped', data);
             this.updateSpeechStatus(false);
+            // Update UI to show transcription is in progress
+            this.updateUserMessageToTranscribing();
+        });
+
+        this.socket.on('user_transcript_delta', (data) => {
+            this.logEvent('receive', 'conversation.item.input_audio_transcription.delta', { delta: data.delta?.substring(0, 50) + '...' });
+            // Stream user's transcript as they speak
+            this.appendUserTranscriptDelta(data.delta);
         });
 
         this.socket.on('user_transcript', (data) => {
             this.logEvent('receive', 'conversation.item.input_audio_transcription.completed', data);
-            // Update the placeholder with actual transcript
-            this.updateUserMessagePlaceholder(data.transcript);
+            // Finalize the user message with the complete transcript
+            this.finalizeUserMessage(data.transcript);
         });
 
         this.socket.on('transcript_delta', (data) => {
@@ -939,13 +961,48 @@ class RealtimeChat {
 
         this.elements.transcript.appendChild(messageDiv);
         this.pendingUserMessage = content;
+        this.userTranscriptBuffer = ''; // Buffer for streaming transcript
         this.scrollToBottom();
+    }
+
+    updateUserMessageToTranscribing() {
+        // Called when speech stops - update to show transcribing status
+        if (this.pendingUserMessage) {
+            // Only update if still showing "Listening..."
+            const currentHTML = this.pendingUserMessage.innerHTML;
+            if (currentHTML.includes('Listening...')) {
+                this.pendingUserMessage.innerHTML = '<span class="transcribing">⏳ Transcribing...</span>';
+            }
+        }
     }
 
     updateUserMessagePlaceholder(transcript) {
         if (this.pendingUserMessage) {
             this.pendingUserMessage.textContent = transcript;
             this.pendingUserMessage = null;
+            this.userTranscriptBuffer = '';
+        } else {
+            // Fallback: if no placeholder exists, add the message normally
+            this.addMessage('user', transcript);
+        }
+        this.scrollToBottom();
+    }
+
+    appendUserTranscriptDelta(delta) {
+        if (this.pendingUserMessage && delta) {
+            // Accumulate the delta
+            this.userTranscriptBuffer = (this.userTranscriptBuffer || '') + delta;
+            // Update the display with streaming text
+            this.pendingUserMessage.textContent = this.userTranscriptBuffer;
+            this.scrollToBottom();
+        }
+    }
+
+    finalizeUserMessage(transcript) {
+        if (this.pendingUserMessage) {
+            this.pendingUserMessage.textContent = transcript;
+            this.pendingUserMessage = null;
+            this.userTranscriptBuffer = '';
         } else {
             // Fallback: if no placeholder exists, add the message normally
             this.addMessage('user', transcript);

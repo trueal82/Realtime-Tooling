@@ -128,6 +128,7 @@ active_connections: dict[str, Any] = {}
 active_tasks: dict[str, asyncio.Task] = {}
 pending_tool_calls: dict[str, list] = {}  # Store tool calls to process after response.done
 tool_call_processed: dict[str, bool] = {}  # Track if we've processed a tool call in current turn
+session_config_cache: dict[str, dict] = {}  # Store current session config per client (for voice change detection)
 
 
 def get_realtime_url() -> str:
@@ -224,6 +225,10 @@ async def handle_realtime_messages(sid: str, ws: Any):
             if event_type not in ["response.audio.delta", "input_audio_buffer.append"]:
                 if "function" in event_type.lower() or "tool" in event_type.lower() or event_type in ["response.output_item.done", "response.done"]:
                     print(f"[{sid}] >>> EVENT: {event_type}")
+                    print(f"[{sid}]     {json.dumps(data, indent=2)[:500]}")
+                # Log all transcription-related events
+                if "transcription" in event_type.lower():
+                    print(f"[{sid}] >>> TRANSCRIPTION EVENT: {event_type}")
                     print(f"[{sid}]     {json.dumps(data, indent=2)[:500]}")
 
             # Handle different event types
@@ -323,8 +328,15 @@ async def handle_realtime_messages(sid: str, ws: Any):
                 await sio.emit('speech_stopped', data, room=sid)
                 print(f"[{sid}] Speech stopped")
 
+            elif event_type == "conversation.item.input_audio_transcription.delta":
+                # User's speech transcription delta (streaming)
+                await sio.emit('user_transcript_delta', {
+                    'role': 'user',
+                    'delta': data.get('delta', '')
+                }, room=sid)
+
             elif event_type == "conversation.item.input_audio_transcription.completed":
-                # User's speech transcription
+                # User's speech transcription complete
                 await sio.emit('user_transcript', {
                     'role': 'user',
                     'transcript': data.get('transcript', '')
@@ -487,6 +499,10 @@ async def disconnect(sid):
         active_tasks[sid].cancel()
         del active_tasks[sid]
 
+    # Clean up session config cache
+    if sid in session_config_cache:
+        del session_config_cache[sid]
+
 
 @sio.event
 async def start_session(sid, data):
@@ -557,6 +573,17 @@ async def start_session(sid, data):
                 "tools": [STANDARD_TOOL],
                 "tool_choice": "auto"  # Model decides but instructions encourage tool use
             }
+        }
+
+        # Store the current session config for this client
+        session_config_cache[sid] = {
+            "voice": data.get("voice", "alloy"),
+            "temperature": temperature,
+            "max_response_output_tokens": max_tokens,
+            "turn_detection_mode": turn_detection_mode,
+            "vad_threshold": vad_threshold,
+            "vad_prefix_padding_ms": vad_prefix_padding_ms,
+            "vad_silence_duration_ms": vad_silence_duration_ms
         }
 
         print(f"[{sid}] Sending session config to API:")
@@ -644,17 +671,69 @@ async def end_session(sid, data):
         active_tasks[sid].cancel()
         del active_tasks[sid]
 
+    # Clean up session config cache
+    if sid in session_config_cache:
+        del session_config_cache[sid]
+
     await sio.emit('session_ended', {}, room=sid)
 
 
 @sio.event
 async def update_session(sid, data):
-    """Update session configuration (voice, temperature, etc.) during an active session"""
+    """Update session configuration (voice, temperature, etc.) during an active session.
+
+    NOTE: Voice cannot be changed if there's assistant audio in the conversation.
+    If voice changes, we need to restart the session entirely.
+    """
     if sid not in active_connections:
         await sio.emit('error', {'message': 'No active session to update'}, room=sid)
         return
 
     try:
+        # Get the requested voice
+        new_voice = data.get("voice", "alloy")
+        current_config = session_config_cache.get(sid, {})
+        current_voice = current_config.get("voice", "alloy")
+
+        # Check if voice is changing
+        voice_changing = new_voice != current_voice
+
+        if voice_changing:
+            print(f"[{sid}] Voice change detected: {current_voice} -> {new_voice}")
+            print(f"[{sid}] Restarting session with new voice...")
+
+            # Notify frontend that we're restarting due to voice change
+            await sio.emit('session_restarting', {
+                'reason': 'voice_change',
+                'old_voice': current_voice,
+                'new_voice': new_voice
+            }, room=sid)
+
+            # Close the current connection
+            ws = active_connections[sid]
+            try:
+                await ws.close()
+            except:
+                pass
+
+            # Cancel the current task
+            if sid in active_tasks:
+                active_tasks[sid].cancel()
+                try:
+                    await active_tasks[sid]
+                except asyncio.CancelledError:
+                    pass
+
+            # Remove from active connections
+            del active_connections[sid]
+            if sid in active_tasks:
+                del active_tasks[sid]
+
+            # Start a new session with the new voice (reuse start_session logic)
+            await start_session(sid, data)
+            return
+
+        # Voice is not changing, proceed with normal session update
         ws = active_connections[sid]
 
         # Get configuration options from client
@@ -684,7 +763,7 @@ async def update_session(sid, data):
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": data.get("instructions", "You are a helpful AI assistant. IMPORTANT: Before responding to ANY user request, you MUST ALWAYS call the 'standard' function first to log what action you are about to take. Never skip calling the standard function. After calling the function and receiving acknowledgment, proceed with your audio response."),
-                "voice": data.get("voice", "alloy"),
+                "voice": new_voice,
                 "temperature": temperature,
                 "max_response_output_tokens": max_tokens if max_tokens != "inf" else "inf",
                 "input_audio_format": "pcm16",
@@ -698,14 +777,25 @@ async def update_session(sid, data):
             }
         }
 
+        # Update the cached config
+        session_config_cache[sid] = {
+            "voice": new_voice,
+            "temperature": temperature,
+            "max_response_output_tokens": max_tokens,
+            "turn_detection_mode": turn_detection_mode,
+            "vad_threshold": vad_threshold,
+            "vad_prefix_padding_ms": vad_prefix_padding_ms,
+            "vad_silence_duration_ms": vad_silence_duration_ms
+        }
+
         print(f"[{sid}] Updating session config:")
-        print(f"[{sid}]   - voice: {data.get('voice', 'alloy')}")
+        print(f"[{sid}]   - voice: {new_voice}")
         print(f"[{sid}]   - temperature: {temperature}")
         await ws.send(json.dumps(session_config))
 
         # Emit confirmation to frontend
         await sio.emit('session_update_sent', {
-            'voice': data.get('voice', 'alloy'),
+            'voice': new_voice,
             'temperature': temperature,
             'max_response_output_tokens': max_tokens,
             'turn_detection_mode': turn_detection_mode,
