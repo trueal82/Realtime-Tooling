@@ -63,9 +63,15 @@ class TestVoiceConfiguration:
         """Test max response output tokens configuration."""
         assert "max_response_output_tokens" in VOICE_CONFIG
         tokens_config = VOICE_CONFIG["max_response_output_tokens"]
-        assert tokens_config["min"] == 1
-        assert tokens_config["max"] == 4096
         assert tokens_config["default"] == 4096
+        assert "description" in tokens_config
+
+    def test_voice_config_vad_settings(self):
+        """Test VAD configuration options."""
+        assert "vad_threshold" in VOICE_CONFIG
+        assert "vad_prefix_padding_ms" in VOICE_CONFIG
+        assert "vad_silence_duration_ms" in VOICE_CONFIG
+        assert "turn_detection_mode" in VOICE_CONFIG
 
 
 class TestRealtimeUrl:

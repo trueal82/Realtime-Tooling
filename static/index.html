@@ -10,50 +10,91 @@
     <div class="container">
         <header>
             <h1>🎙️ GPT-4o Realtime Audio Chat</h1>
-            <p class="subtitle">Powered by Azure OpenAI</p>
+            <p class="subtitle">Powered by Azure OpenAI │ Model: gpt-realtime-2025-08-28</p>
         </header>
 
-        <div class="settings-panel">
-            <h2>Audio Settings</h2>
+        <!-- Tech Config Panel -->
+        <div class="settings-panel tech-panel">
+            <div class="panel-header">
+                <h2>⚙️ Session Configuration</h2>
+                <button id="toggle-advanced-btn" class="btn-small">Show Advanced</button>
+            </div>
+
             <div class="settings-grid">
                 <div class="setting-group">
-                    <label for="microphone-select">🎤 Microphone</label>
-                    <select id="microphone-select">
-                        <option value="">Loading devices...</option>
+                    <label for="microphone-select">🎤 Input Device</label>
+                    <select id="microphone-select" class="tech-select">
+                        <option value="">Loading...</option>
                     </select>
                 </div>
                 <div class="setting-group">
-                    <label for="speaker-select">🔊 Speaker</label>
-                    <select id="speaker-select">
-                        <option value="">Loading devices...</option>
+                    <label for="speaker-select">🔊 Output Device</label>
+                    <select id="speaker-select" class="tech-select">
+                        <option value="">Loading...</option>
                     </select>
                 </div>
                 <div class="setting-group">
-                    <label for="voice-select">🗣️ AI Voice</label>
-                    <select id="voice-select">
-                        <option value="">Loading voices...</option>
+                    <label for="voice-select">🗣️ Voice Model</label>
+                    <select id="voice-select" class="tech-select">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label for="max-tokens-select">📊 Max Tokens</label>
+                    <select id="max-tokens-select" class="tech-select">
+                        <option value="256">256</option>
+                        <option value="512">512</option>
+                        <option value="1024">1024</option>
+                        <option value="2048">2048</option>
+                        <option value="4096" selected>4096</option>
+                        <option value="inf">∞ Unlimited</option>
                     </select>
                 </div>
             </div>
 
-            <h2 class="settings-section-title">Voice Configuration</h2>
             <div class="settings-grid">
-                <div class="setting-group">
+                <div class="setting-group slider-group">
                     <label for="temperature-slider">
-                        🎚️ Temperature
-                        <span class="setting-value" id="temperature-value">0.8</span>
+                        🌡️ Temperature
+                        <code id="temperature-value">0.80</code>
                     </label>
-                    <input type="range" id="temperature-slider" min="0.6" max="1.2" step="0.1" value="0.8">
-                    <span class="setting-description" id="temperature-description">Controls response randomness</span>
+                    <input type="range" id="temperature-slider" min="0.6" max="1.2" step="0.05" value="0.8">
+                    <span class="setting-description" id="temperature-description">Creativity level</span>
                 </div>
-                <div class="setting-group">
-                    <label for="max-tokens-select">📝 Max Response Tokens</label>
-                    <select id="max-tokens-select">
-                        <option value="1024">1024 (Short)</option>
-                        <option value="2048">2048 (Medium)</option>
-                        <option value="4096" selected>4096 (Long)</option>
-                        <option value="inf">Unlimited</option>
-                    </select>
+            </div>
+
+            <!-- Advanced Settings (hidden by default) -->
+            <div id="advanced-settings" class="advanced-settings hidden">
+                <h3>🔧 VAD Configuration</h3>
+                <div class="settings-grid">
+                    <div class="setting-group">
+                        <label for="turn-detection-select">Turn Detection</label>
+                        <select id="turn-detection-select" class="tech-select">
+                            <option value="server_vad">Server VAD</option>
+                            <option value="none">Manual (None)</option>
+                        </select>
+                    </div>
+                    <div class="setting-group slider-group">
+                        <label for="vad-threshold-slider">
+                            VAD Threshold
+                            <code id="vad-threshold-value">0.50</code>
+                        </label>
+                        <input type="range" id="vad-threshold-slider" min="0" max="1" step="0.05" value="0.5">
+                    </div>
+                    <div class="setting-group slider-group">
+                        <label for="vad-prefix-slider">
+                            Prefix Padding
+                            <code id="vad-prefix-value">300</code>ms
+                        </label>
+                        <input type="range" id="vad-prefix-slider" min="0" max="1000" step="50" value="300">
+                    </div>
+                    <div class="setting-group slider-group">
+                        <label for="vad-silence-slider">
+                            Silence Duration
+                            <code id="vad-silence-value">500</code>ms
+                        </label>
+                        <input type="range" id="vad-silence-slider" min="100" max="2000" step="50" value="500">
+                    </div>
                 </div>
             </div>
         </div>
@@ -84,11 +125,33 @@
             <canvas id="visualizer-canvas"></canvas>
         </div>
 
-        <div class="transcript-container">
-            <h2>Conversation Transcript</h2>
-            <div class="transcript" id="transcript">
-                <div class="transcript-placeholder">
-                    Start a session to begin the conversation...
+        <!-- Main Content: Transcript + Tech Log -->
+        <div class="main-content">
+            <div class="transcript-container">
+                <h2>💬 Conversation</h2>
+                <div class="transcript" id="transcript">
+                    <div class="transcript-placeholder">
+                        Start a session to begin the conversation...
+                    </div>
+                </div>
+            </div>
+
+            <div class="techlog-container">
+                <div class="techlog-header">
+                    <h2>📡 Event Log</h2>
+                    <div class="techlog-controls">
+                        <div class="filter-group">
+                            <label class="filter-checkbox"><input type="checkbox" id="filter-info" checked><span class="filter-label info">info</span></label>
+                            <label class="filter-checkbox"><input type="checkbox" id="filter-send" checked><span class="filter-label send">send</span></label>
+                            <label class="filter-checkbox"><input type="checkbox" id="filter-receive" checked><span class="filter-label receive">recv</span></label>
+                            <label class="filter-checkbox"><input type="checkbox" id="filter-tool" checked><span class="filter-label tool">tool</span></label>
+                            <label class="filter-checkbox"><input type="checkbox" id="filter-error" checked><span class="filter-label error">error</span></label>
+                        </div>
+                        <button id="clear-log-btn" class="btn-small">Clear</button>
+                    </div>
+                </div>
+                <div class="techlog" id="techlog">
+                    <div class="log-entry info">[SYS] Waiting for session...</div>
                 </div>
             </div>
         </div>

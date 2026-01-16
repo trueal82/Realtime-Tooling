@@ -42,6 +42,15 @@ class TestStaticFiles:
         assert "start-btn" in content
         assert "stop-btn" in content
         assert "transcript" in content
+        assert "techlog" in content
+        assert "clear-log-btn" in content
+        # Check for filters
+        assert "filter-info" in content
+        assert "filter-receive" in content
+        assert "filter-tool" in content
+        # Check for advanced VAD settings
+        assert "vad-threshold-slider" in content
+        assert "turn-detection-select" in content
         # Check for local socket.io reference (not CDN)
         assert "/static/socket.io.min.js" in content
         assert "cdnjs.cloudflare.com" not in content
@@ -59,6 +68,11 @@ class TestStaticFiles:
         assert "startSession" in content
         assert "endSession" in content
         assert "socket.emit" in content
+        assert "logEvent" in content
+        assert "createUserMessagePlaceholder" in content
+        assert "clearTechLog" in content
+        assert "applyLogFilters" in content
+        assert "tool_call" in content
 
     def test_audio_processor_js_has_worklet(self, static_dir):
         """Test that audio-processor.js contains AudioWorklet processor."""

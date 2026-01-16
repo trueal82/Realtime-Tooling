@@ -22,6 +22,7 @@ class RealtimeChat {
         // State
         this.isSessionActive = false;
         this.currentAssistantMessage = null;
+        this.pendingUserMessage = null;  // Track user message placeholder
         this.voiceConfig = null;
 
         // DOM Elements
@@ -33,12 +34,31 @@ class RealtimeChat {
             temperatureValue: document.getElementById('temperature-value'),
             temperatureDescription: document.getElementById('temperature-description'),
             maxTokensSelect: document.getElementById('max-tokens-select'),
+            // Advanced VAD settings
+            turnDetectionSelect: document.getElementById('turn-detection-select'),
+            vadThresholdSlider: document.getElementById('vad-threshold-slider'),
+            vadThresholdValue: document.getElementById('vad-threshold-value'),
+            vadPrefixSlider: document.getElementById('vad-prefix-slider'),
+            vadPrefixValue: document.getElementById('vad-prefix-value'),
+            vadSilenceSlider: document.getElementById('vad-silence-slider'),
+            vadSilenceValue: document.getElementById('vad-silence-value'),
+            toggleAdvancedBtn: document.getElementById('toggle-advanced-btn'),
+            advancedSettings: document.getElementById('advanced-settings'),
+            // Controls
             startBtn: document.getElementById('start-btn'),
             stopBtn: document.getElementById('stop-btn'),
             connectionStatus: document.getElementById('connection-status'),
             speechStatus: document.getElementById('speech-status'),
             transcript: document.getElementById('transcript'),
-            visualizerCanvas: document.getElementById('visualizer-canvas')
+            visualizerCanvas: document.getElementById('visualizer-canvas'),
+            techlog: document.getElementById('techlog'),
+            clearLogBtn: document.getElementById('clear-log-btn'),
+            // Filters
+            filterInfo: document.getElementById('filter-info'),
+            filterSend: document.getElementById('filter-send'),
+            filterReceive: document.getElementById('filter-receive'),
+            filterTool: document.getElementById('filter-tool'),
+            filterError: document.getElementById('filter-error')
         };
 
         this.init();
@@ -147,7 +167,71 @@ class RealtimeChat {
 
         // Temperature slider update
         this.elements.temperatureSlider.addEventListener('input', (e) => {
-            this.elements.temperatureValue.textContent = e.target.value;
+            this.elements.temperatureValue.textContent = parseFloat(e.target.value).toFixed(2);
+        });
+
+        // VAD sliders
+        this.elements.vadThresholdSlider?.addEventListener('input', (e) => {
+            this.elements.vadThresholdValue.textContent = parseFloat(e.target.value).toFixed(2);
+        });
+        this.elements.vadPrefixSlider?.addEventListener('input', (e) => {
+            this.elements.vadPrefixValue.textContent = e.target.value;
+        });
+        this.elements.vadSilenceSlider?.addEventListener('input', (e) => {
+            this.elements.vadSilenceValue.textContent = e.target.value;
+        });
+
+        // Toggle advanced settings
+        this.elements.toggleAdvancedBtn?.addEventListener('click', () => {
+            const advanced = this.elements.advancedSettings;
+            const btn = this.elements.toggleAdvancedBtn;
+            if (advanced.classList.contains('hidden')) {
+                advanced.classList.remove('hidden');
+                btn.textContent = 'Hide Advanced';
+            } else {
+                advanced.classList.add('hidden');
+                btn.textContent = 'Show Advanced';
+            }
+        });
+
+        // Clear log button
+        this.elements.clearLogBtn.addEventListener('click', () => this.clearTechLog());
+
+        // Log filter checkboxes
+        const filterHandler = () => this.applyLogFilters();
+        this.elements.filterInfo?.addEventListener('change', filterHandler);
+        this.elements.filterSend?.addEventListener('change', filterHandler);
+        this.elements.filterReceive?.addEventListener('change', filterHandler);
+        this.elements.filterTool?.addEventListener('change', filterHandler);
+        this.elements.filterError?.addEventListener('change', filterHandler);
+    }
+
+    applyLogFilters() {
+        const filters = {
+            info: this.elements.filterInfo?.checked ?? true,
+            send: this.elements.filterSend?.checked ?? true,
+            receive: this.elements.filterReceive?.checked ?? true,
+            tool: this.elements.filterTool?.checked ?? true,
+            error: this.elements.filterError?.checked ?? true
+        };
+
+        // Apply to ALL log entries
+        const entries = this.elements.techlog.querySelectorAll('.log-entry');
+        entries.forEach(entry => {
+            // Determine entry type from class
+            let type = 'info'; // default
+            if (entry.classList.contains('send')) type = 'send';
+            else if (entry.classList.contains('receive')) type = 'receive';
+            else if (entry.classList.contains('tool')) type = 'tool';
+            else if (entry.classList.contains('error')) type = 'error';
+            else if (entry.classList.contains('info')) type = 'info';
+
+            // Show or hide based on filter
+            if (filters[type]) {
+                entry.style.display = '';
+            } else {
+                entry.style.display = 'none';
+            }
         });
     }
 
@@ -158,7 +242,8 @@ class RealtimeChat {
 
         this.socket.on('connect', () => {
             console.log('Connected to server');
-            this.updateConnectionStatus('connected', 'Connected');
+            this.updateConnectionStatus('connected', 'Connected to Server');
+            this.logEvent('info', 'Connected to Socket.IO server');
         });
 
         this.socket.on('disconnect', () => {
@@ -166,57 +251,150 @@ class RealtimeChat {
             this.updateConnectionStatus('disconnected', 'Disconnected');
             this.isSessionActive = false;
             this.updateButtons();
+            this.logEvent('info', 'Disconnected from server');
         });
 
         this.socket.on('connected', (data) => {
             console.log('Socket ID:', data.sid);
+            this.logEvent('info', `Socket ID: ${data.sid}`);
         });
 
         this.socket.on('session_created', (data) => {
             console.log('Session created:', data);
+            this.logEvent('receive', 'session.created', data);
+            this.updateConnectionStatus('connected', 'Session Active');
             this.clearTranscript();
             this.addSystemMessage('Session started. Speak to begin the conversation...');
         });
 
         this.socket.on('session_updated', (data) => {
             console.log('Session updated:', data);
+            this.logEvent('receive', 'session.updated', data);
+            this.updateConnectionStatus('connected', 'Session Active');
         });
 
-        this.socket.on('speech_started', () => {
+        this.socket.on('speech_started', (data) => {
+            this.logEvent('receive', 'input_audio_buffer.speech_started', data);
             this.updateSpeechStatus(true);
+            // Create placeholder for user message BEFORE response starts
+            this.createUserMessagePlaceholder();
             // Interrupt any ongoing playback when user starts speaking
             this.interruptPlayback();
         });
 
-        this.socket.on('speech_stopped', () => {
+        this.socket.on('speech_stopped', (data) => {
+            this.logEvent('receive', 'input_audio_buffer.speech_stopped', data);
             this.updateSpeechStatus(false);
         });
 
         this.socket.on('user_transcript', (data) => {
-            this.addMessage('user', data.transcript);
+            this.logEvent('receive', 'conversation.item.input_audio_transcription.completed', data);
+            // Update the placeholder with actual transcript
+            this.updateUserMessagePlaceholder(data.transcript);
         });
 
         this.socket.on('transcript_delta', (data) => {
+            this.logEvent('receive', 'response.audio_transcript.delta', { delta: data.delta.substring(0, 50) + '...' });
             this.appendAssistantMessage(data.delta);
         });
 
         this.socket.on('transcript_done', (data) => {
+            this.logEvent('receive', 'response.audio_transcript.done', data);
             this.finalizeAssistantMessage(data.transcript);
         });
 
+        // Handle TEXT responses (when model responds with text instead of audio)
+        this.socket.on('text_delta', (data) => {
+            this.logEvent('receive', 'response.text.delta', { delta: data.delta.substring(0, 50) + '...' });
+            this.appendAssistantMessage(data.delta);
+        });
+
+        this.socket.on('text_done', (data) => {
+            this.logEvent('receive', 'response.text.done', { text: data.text?.substring(0, 100) + '...' });
+            this.finalizeAssistantMessage(data.text);
+        });
+
         this.socket.on('audio_delta', (data) => {
+            // Don't log full audio data, just note it
+            this.logEvent('receive', 'response.audio.delta', { bytes: data.delta.length });
             this.queueAudio(data.delta);
         });
 
-        this.socket.on('audio_done', () => {
-            // Audio stream complete
+        this.socket.on('audio_done', (data) => {
+            this.logEvent('receive', 'response.audio.done', data);
         });
 
-        this.socket.on('response_done', () => {
+        this.socket.on('response_created', (data) => {
+            this.logEvent('receive', 'response.created', data);
+        });
+
+        this.socket.on('response_output_item_added', (data) => {
+            this.logEvent('receive', 'response.output_item.added', data);
+        });
+
+        this.socket.on('response_content_part_added', (data) => {
+            this.logEvent('receive', 'response.content_part.added', data);
+        });
+
+        this.socket.on('conversation_item_created', (data) => {
+            this.logEvent('receive', 'conversation.item.created', data);
+        });
+
+        this.socket.on('response_done', (data) => {
+            this.logEvent('receive', 'response.done', data);
             this.currentAssistantMessage = null;
         });
 
+        this.socket.on('function_call_delta', (data) => {
+            this.logEvent('receive', 'response.function_call_arguments.delta', data);
+        });
+
+        this.socket.on('function_call_done', (data) => {
+            this.logEvent('tool', `function_call: ${data.name}`, data);
+        });
+
+        this.socket.on('tool_call', (data) => {
+            // Log tool call with special formatting
+            console.log('🔧 TOOL CALL:', data);
+            this.logEvent('tool', `🔧 TOOL CALL: ${data.name}`, {
+                call_id: data.call_id,
+                arguments: data.arguments
+            });
+        });
+
+        this.socket.on('tool_response', (data) => {
+            // Log tool response
+            console.log('✅ TOOL RESPONSE:', data);
+            this.logEvent('tool', `✅ TOOL RESPONSE sent`, {
+                call_id: data.call_id,
+                output: data.output
+            });
+        });
+
+        this.socket.on('function_call_delta', (data) => {
+            this.logEvent('tool', 'function_call_arguments.delta', { delta: data.delta?.substring(0, 50) });
+        });
+
+        this.socket.on('function_call_done', (data) => {
+            console.log('📦 FUNCTION CALL DONE:', data);
+            this.logEvent('tool', `📦 function_call_arguments.done: ${data.name || 'unknown'}`, data);
+        });
+
+        this.socket.on('output_item_done', (data) => {
+            const item = data.item || {};
+            if (item.type === 'function_call') {
+                console.log('📦 OUTPUT ITEM (function_call):', data);
+                this.logEvent('tool', `📦 output_item.done (function_call): ${item.name}`, {
+                    call_id: item.call_id,
+                    status: item.status
+                });
+            } else {
+                this.logEvent('receive', `response.output_item.done (${item.type || 'unknown'})`, data);
+            }
+        });
+
         this.socket.on('session_ended', () => {
+            this.logEvent('info', 'Session ended');
             this.addSystemMessage('Session ended.');
             this.isSessionActive = false;
             this.updateButtons();
@@ -224,7 +402,18 @@ class RealtimeChat {
 
         this.socket.on('error', (data) => {
             console.error('Error:', data);
+            this.logEvent('error', 'Error', data);
             this.showError(data.message || data.error?.message || 'An error occurred');
+        });
+
+        this.socket.on('unhandled_event', (data) => {
+            // Log unhandled events - might reveal tool-related events
+            const eventType = data.type || 'unknown';
+            if (eventType.toLowerCase().includes('function') || eventType.toLowerCase().includes('tool')) {
+                this.logEvent('tool', `UNHANDLED: ${eventType}`, data.data);
+            } else {
+                this.logEvent('info', `UNHANDLED: ${eventType}`, data.data);
+            }
         });
     }
 
@@ -259,11 +448,24 @@ class RealtimeChat {
             const temperature = parseFloat(this.elements.temperatureSlider.value);
             const maxTokens = this.elements.maxTokensSelect.value;
 
-            this.socket.emit('start_session', {
+            // Get VAD settings
+            const turnDetectionMode = this.elements.turnDetectionSelect?.value || 'server_vad';
+            const vadThreshold = parseFloat(this.elements.vadThresholdSlider?.value || 0.5);
+            const vadPrefixPaddingMs = parseInt(this.elements.vadPrefixSlider?.value || 300);
+            const vadSilenceDurationMs = parseInt(this.elements.vadSilenceSlider?.value || 500);
+
+            const sessionConfig = {
                 voice,
                 temperature,
-                max_response_output_tokens: maxTokens === 'inf' ? 'inf' : parseInt(maxTokens)
-            });
+                max_response_output_tokens: maxTokens === 'inf' ? 'inf' : parseInt(maxTokens),
+                turn_detection_mode: turnDetectionMode,
+                vad_threshold: vadThreshold,
+                vad_prefix_padding_ms: vadPrefixPaddingMs,
+                vad_silence_duration_ms: vadSilenceDurationMs
+            };
+
+            this.logEvent('send', 'start_session', sessionConfig);
+            this.socket.emit('start_session', sessionConfig);
 
             this.isSessionActive = true;
             this.updateButtons();
@@ -616,6 +818,110 @@ class RealtimeChat {
         ctx.moveTo(0, height / 2);
         ctx.lineTo(width, height / 2);
         ctx.stroke();
+    }
+
+    // User Message Placeholder Methods (for correct ordering)
+    createUserMessagePlaceholder() {
+        // Remove placeholder if exists
+        const placeholder = this.elements.transcript.querySelector('.transcript-placeholder');
+        if (placeholder) placeholder.remove();
+
+        // Create placeholder for user message that will be filled in when transcription completes
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message user';
+        messageDiv.id = 'pending-user-message';
+
+        const label = document.createElement('div');
+        label.className = 'message-label';
+        label.textContent = 'You';
+
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        content.innerHTML = '<span class="transcribing">🎤 Listening...</span>';
+
+        messageDiv.appendChild(label);
+        messageDiv.appendChild(content);
+
+        this.elements.transcript.appendChild(messageDiv);
+        this.pendingUserMessage = content;
+        this.scrollToBottom();
+    }
+
+    updateUserMessagePlaceholder(transcript) {
+        if (this.pendingUserMessage) {
+            this.pendingUserMessage.textContent = transcript;
+            this.pendingUserMessage = null;
+        } else {
+            // Fallback: if no placeholder exists, add the message normally
+            this.addMessage('user', transcript);
+        }
+        this.scrollToBottom();
+    }
+
+    // Tech Log Methods
+    logEvent(type, eventName, data = null) {
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry ${type}`;
+
+        const timestamp = new Date().toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            fractionalSecondDigits: 3
+        });
+
+        let html = `<span class="timestamp">${timestamp}</span>`;
+        html += `<span class="event-type">${eventName}</span>`;
+
+        if (data) {
+            // Truncate large data objects for display
+            let dataStr;
+            try {
+                dataStr = JSON.stringify(data);
+                if (dataStr.length > 200) {
+                    dataStr = dataStr.substring(0, 200) + '...';
+                }
+            } catch (e) {
+                dataStr = String(data);
+            }
+            html += `<div class="event-data">${this.escapeHtml(dataStr)}</div>`;
+        }
+
+        logEntry.innerHTML = html;
+
+        // Check if this type should be visible based on current filter
+        const filterElement = {
+            'info': this.elements.filterInfo,
+            'send': this.elements.filterSend,
+            'receive': this.elements.filterReceive,
+            'tool': this.elements.filterTool,
+            'error': this.elements.filterError
+        }[type];
+
+        if (filterElement && !filterElement.checked) {
+            logEntry.style.display = 'none';
+        }
+
+        this.elements.techlog.appendChild(logEntry);
+
+        // Auto-scroll to bottom
+        this.elements.techlog.scrollTop = this.elements.techlog.scrollHeight;
+
+        // Limit log entries to prevent memory issues
+        while (this.elements.techlog.children.length > 500) {
+            this.elements.techlog.removeChild(this.elements.techlog.firstChild);
+        }
+    }
+
+    clearTechLog() {
+        this.elements.techlog.innerHTML = '<div class="log-entry info">Log cleared.</div>';
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 }
 
