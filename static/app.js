@@ -25,6 +25,17 @@ class RealtimeChat {
         this.pendingUserMessage = null;  // Track user message placeholder
         this.voiceConfig = null;
 
+        // Confirmed session state (what the backend has accepted)
+        this.confirmedSessionState = {
+            voice: 'alloy',
+            temperature: 0.8,
+            max_response_output_tokens: 4096,
+            turn_detection_mode: 'server_vad',
+            vad_threshold: 0.5,
+            vad_prefix_padding_ms: 300,
+            vad_silence_duration_ms: 500
+        };
+
         // DOM Elements
         this.elements = {
             microphoneSelect: document.getElementById('microphone-select'),
@@ -165,21 +176,36 @@ class RealtimeChat {
         // Listen for device changes
         navigator.mediaDevices.addEventListener('devicechange', () => this.loadAudioDevices());
 
-        // Temperature slider update
+        // Temperature slider update (visual feedback on input, send on change)
         this.elements.temperatureSlider.addEventListener('input', (e) => {
             this.elements.temperatureValue.textContent = parseFloat(e.target.value).toFixed(2);
         });
+        this.elements.temperatureSlider.addEventListener('change', () => this.sendSessionUpdateIfActive());
 
-        // VAD sliders
+        // Voice select - send update when changed during active session
+        this.elements.voiceSelect.addEventListener('change', () => this.sendSessionUpdateIfActive());
+
+        // Max tokens select - send update when changed during active session
+        this.elements.maxTokensSelect.addEventListener('change', () => this.sendSessionUpdateIfActive());
+
+        // VAD sliders (visual feedback on input, send on change)
         this.elements.vadThresholdSlider?.addEventListener('input', (e) => {
             this.elements.vadThresholdValue.textContent = parseFloat(e.target.value).toFixed(2);
         });
+        this.elements.vadThresholdSlider?.addEventListener('change', () => this.sendSessionUpdateIfActive());
+
         this.elements.vadPrefixSlider?.addEventListener('input', (e) => {
             this.elements.vadPrefixValue.textContent = e.target.value;
         });
+        this.elements.vadPrefixSlider?.addEventListener('change', () => this.sendSessionUpdateIfActive());
+
         this.elements.vadSilenceSlider?.addEventListener('input', (e) => {
             this.elements.vadSilenceValue.textContent = e.target.value;
         });
+        this.elements.vadSilenceSlider?.addEventListener('change', () => this.sendSessionUpdateIfActive());
+
+        // Turn detection select - send update when changed during active session
+        this.elements.turnDetectionSelect?.addEventListener('change', () => this.sendSessionUpdateIfActive());
 
         // Toggle advanced settings
         this.elements.toggleAdvancedBtn?.addEventListener('click', () => {
@@ -204,6 +230,43 @@ class RealtimeChat {
         this.elements.filterReceive?.addEventListener('change', filterHandler);
         this.elements.filterTool?.addEventListener('change', filterHandler);
         this.elements.filterError?.addEventListener('change', filterHandler);
+    }
+
+    /**
+     * Send session update to backend if session is active
+     */
+    sendSessionUpdateIfActive() {
+        if (!this.isSessionActive) {
+            return; // No active session, settings will be used on next start
+        }
+
+        const sessionConfig = this.getCurrentSessionConfig();
+        console.log('Sending session update:', sessionConfig);
+        this.logEvent('send', 'update_session', sessionConfig);
+        this.socket.emit('update_session', sessionConfig);
+    }
+
+    /**
+     * Get current session configuration from UI elements
+     */
+    getCurrentSessionConfig() {
+        const voice = this.elements.voiceSelect.value;
+        const temperature = parseFloat(this.elements.temperatureSlider.value);
+        const maxTokens = this.elements.maxTokensSelect.value;
+        const turnDetectionMode = this.elements.turnDetectionSelect?.value || 'server_vad';
+        const vadThreshold = parseFloat(this.elements.vadThresholdSlider?.value || 0.5);
+        const vadPrefixPaddingMs = parseInt(this.elements.vadPrefixSlider?.value || 300);
+        const vadSilenceDurationMs = parseInt(this.elements.vadSilenceSlider?.value || 500);
+
+        return {
+            voice,
+            temperature,
+            max_response_output_tokens: maxTokens === 'inf' ? 'inf' : parseInt(maxTokens),
+            turn_detection_mode: turnDetectionMode,
+            vad_threshold: vadThreshold,
+            vad_prefix_padding_ms: vadPrefixPaddingMs,
+            vad_silence_duration_ms: vadSilenceDurationMs
+        };
     }
 
     applyLogFilters() {
@@ -271,6 +334,56 @@ class RealtimeChat {
             console.log('Session updated:', data);
             this.logEvent('receive', 'session.updated', data);
             this.updateConnectionStatus('connected', 'Session Active');
+
+            // Sync UI with confirmed backend state
+            const session = data.session || {};
+            if (session.voice) {
+                this.confirmedSessionState.voice = session.voice;
+                this.elements.voiceSelect.value = session.voice;
+            }
+            if (session.temperature !== undefined) {
+                this.confirmedSessionState.temperature = session.temperature;
+                this.elements.temperatureSlider.value = session.temperature;
+                this.elements.temperatureValue.textContent = parseFloat(session.temperature).toFixed(2);
+            }
+            if (session.max_response_output_tokens !== undefined) {
+                this.confirmedSessionState.max_response_output_tokens = session.max_response_output_tokens;
+                this.elements.maxTokensSelect.value = session.max_response_output_tokens === 'inf' ? 'inf' : session.max_response_output_tokens;
+            }
+            // Sync turn detection settings
+            const turnDetection = session.turn_detection;
+            if (turnDetection) {
+                this.confirmedSessionState.turn_detection_mode = turnDetection.type || 'server_vad';
+                if (this.elements.turnDetectionSelect) {
+                    this.elements.turnDetectionSelect.value = turnDetection.type || 'server_vad';
+                }
+                if (turnDetection.threshold !== undefined && this.elements.vadThresholdSlider) {
+                    this.confirmedSessionState.vad_threshold = turnDetection.threshold;
+                    this.elements.vadThresholdSlider.value = turnDetection.threshold;
+                    this.elements.vadThresholdValue.textContent = parseFloat(turnDetection.threshold).toFixed(2);
+                }
+                if (turnDetection.prefix_padding_ms !== undefined && this.elements.vadPrefixSlider) {
+                    this.confirmedSessionState.vad_prefix_padding_ms = turnDetection.prefix_padding_ms;
+                    this.elements.vadPrefixSlider.value = turnDetection.prefix_padding_ms;
+                    this.elements.vadPrefixValue.textContent = turnDetection.prefix_padding_ms;
+                }
+                if (turnDetection.silence_duration_ms !== undefined && this.elements.vadSilenceSlider) {
+                    this.confirmedSessionState.vad_silence_duration_ms = turnDetection.silence_duration_ms;
+                    this.elements.vadSilenceSlider.value = turnDetection.silence_duration_ms;
+                    this.elements.vadSilenceValue.textContent = turnDetection.silence_duration_ms;
+                }
+            } else if (session.turn_detection === null) {
+                this.confirmedSessionState.turn_detection_mode = 'none';
+                if (this.elements.turnDetectionSelect) {
+                    this.elements.turnDetectionSelect.value = 'none';
+                }
+            }
+            console.log('Session state synced:', this.confirmedSessionState);
+        });
+
+        this.socket.on('session_update_sent', (data) => {
+            console.log('Session update sent confirmation:', data);
+            this.logEvent('info', 'Session update sent to API', data);
         });
 
         this.socket.on('speech_started', (data) => {
@@ -443,26 +556,8 @@ class RealtimeChat {
             // Setup audio processing
             await this.setupAudioProcessing();
 
-            // Start the session with the backend
-            const voice = this.elements.voiceSelect.value;
-            const temperature = parseFloat(this.elements.temperatureSlider.value);
-            const maxTokens = this.elements.maxTokensSelect.value;
-
-            // Get VAD settings
-            const turnDetectionMode = this.elements.turnDetectionSelect?.value || 'server_vad';
-            const vadThreshold = parseFloat(this.elements.vadThresholdSlider?.value || 0.5);
-            const vadPrefixPaddingMs = parseInt(this.elements.vadPrefixSlider?.value || 300);
-            const vadSilenceDurationMs = parseInt(this.elements.vadSilenceSlider?.value || 500);
-
-            const sessionConfig = {
-                voice,
-                temperature,
-                max_response_output_tokens: maxTokens === 'inf' ? 'inf' : parseInt(maxTokens),
-                turn_detection_mode: turnDetectionMode,
-                vad_threshold: vadThreshold,
-                vad_prefix_padding_ms: vadPrefixPaddingMs,
-                vad_silence_duration_ms: vadSilenceDurationMs
-            };
+            // Start the session with the backend using current UI settings
+            const sessionConfig = this.getCurrentSessionConfig();
 
             this.logEvent('send', 'start_session', sessionConfig);
             this.socket.emit('start_session', sessionConfig);

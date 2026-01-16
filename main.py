@@ -647,6 +647,78 @@ async def end_session(sid, data):
     await sio.emit('session_ended', {}, room=sid)
 
 
+@sio.event
+async def update_session(sid, data):
+    """Update session configuration (voice, temperature, etc.) during an active session"""
+    if sid not in active_connections:
+        await sio.emit('error', {'message': 'No active session to update'}, room=sid)
+        return
+
+    try:
+        ws = active_connections[sid]
+
+        # Get configuration options from client
+        temperature = data.get("temperature", VOICE_CONFIG["temperature"]["default"])
+        max_tokens = data.get("max_response_output_tokens", VOICE_CONFIG["max_response_output_tokens"]["default"])
+        vad_threshold = data.get("vad_threshold", VOICE_CONFIG["vad_threshold"]["default"])
+        vad_prefix_padding_ms = data.get("vad_prefix_padding_ms", VOICE_CONFIG["vad_prefix_padding_ms"]["default"])
+        vad_silence_duration_ms = data.get("vad_silence_duration_ms", VOICE_CONFIG["vad_silence_duration_ms"]["default"])
+        turn_detection_mode = data.get("turn_detection_mode", VOICE_CONFIG["turn_detection_mode"]["default"])
+
+        # Validate temperature range
+        temperature = max(VOICE_CONFIG["temperature"]["min"],
+                         min(VOICE_CONFIG["temperature"]["max"], float(temperature)))
+
+        # Build turn detection config
+        turn_detection = None
+        if turn_detection_mode == "server_vad":
+            turn_detection = {
+                "type": "server_vad",
+                "threshold": float(vad_threshold),
+                "prefix_padding_ms": int(vad_prefix_padding_ms),
+                "silence_duration_ms": int(vad_silence_duration_ms)
+            }
+
+        session_config = {
+            "type": "session.update",
+            "session": {
+                "modalities": ["text", "audio"],
+                "instructions": data.get("instructions", "You are a helpful AI assistant. IMPORTANT: Before responding to ANY user request, you MUST ALWAYS call the 'standard' function first to log what action you are about to take. Never skip calling the standard function. After calling the function and receiving acknowledgment, proceed with your audio response."),
+                "voice": data.get("voice", "alloy"),
+                "temperature": temperature,
+                "max_response_output_tokens": max_tokens if max_tokens != "inf" else "inf",
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "input_audio_transcription": {
+                    "model": "whisper-1"
+                },
+                "turn_detection": turn_detection,
+                "tools": [STANDARD_TOOL],
+                "tool_choice": "auto"
+            }
+        }
+
+        print(f"[{sid}] Updating session config:")
+        print(f"[{sid}]   - voice: {data.get('voice', 'alloy')}")
+        print(f"[{sid}]   - temperature: {temperature}")
+        await ws.send(json.dumps(session_config))
+
+        # Emit confirmation to frontend
+        await sio.emit('session_update_sent', {
+            'voice': data.get('voice', 'alloy'),
+            'temperature': temperature,
+            'max_response_output_tokens': max_tokens,
+            'turn_detection_mode': turn_detection_mode,
+            'vad_threshold': vad_threshold,
+            'vad_prefix_padding_ms': vad_prefix_padding_ms,
+            'vad_silence_duration_ms': vad_silence_duration_ms
+        }, room=sid)
+
+    except Exception as e:
+        print(f"[{sid}] Error updating session: {e}")
+        await sio.emit('error', {'message': f'Failed to update session: {str(e)}'}, room=sid)
+
+
 # Serve static files
 async def index(request):
     """Serve the main HTML page"""
